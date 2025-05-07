@@ -1,0 +1,125 @@
+---
+- name: Setup vsftpd on Rocky Linux 9
+  hosts: ftp
+  gather_facts: true
+  ignore_errors: false
+  become: true
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  
+  tasks:
+  - name: directory create /ftp
+    file:
+      path: /home/ftp
+      state: directory
+      mode: '0755'
+
+  - name: directory create /ftp/files
+    file:
+      path: /home/ftp/files
+      state: directory
+      mode: '0755'
+
+  - name: install ftp
+    dnf:
+      name: vsftpd
+      state: latest
+
+  - name: allow chroot & passive mode & syslog
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      line: "{{ item }}"
+    with_items:
+    - 'allow_writeable_chroot=YES'
+    - 'pasv_enable=YES'
+    - 'pasv_min_port=65000'
+    - 'pasv_max_port=65100'
+    - 'syslog_enable=YES'
+    - 'log_ftp_protocol=YES'
+    - 'user_sub_token=$USER'
+    - 'local_root=/home/ftp/files'
+
+  - name: enable chroot
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      regexp: '#chroot_list_enable=YES'
+      line: chroot_list_enable=YES
+
+  - name: chroot change
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      regexp: '#chroot_list_file=/etc/vsftpd/chroot_list'
+      line: chroot_list_file=/home/ftp/chroot
+
+  - name: xferlog root change
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      regexp: '#xferlog_file=/var/log/xferlog'
+      line: xferlog_file=/home/ftp/xferlog
+
+  - name: enable chroot
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      regexp: '#chroot_list_enable=YES'
+      line: chroot_list_enable=YES
+
+  - name: enable chroot
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      regexp: '#chroot_local_user=YES'
+      line: chroot_local_user=YES
+
+  - name: user create
+    user:
+      name: "{{ item }}"
+      password: "{{ 'It12345!' | password_hash('sha512') }}"
+    loop:
+    - twcha
+    - dhkim
+    - jywon
+    - hcyoon
+
+  - name: bannerfile change
+    lineinfile:
+      path: /etc/vsftpd/vsftpd.conf
+      regexp: '#ftpd_banner=Welcome to blah FTP service.'
+      line: banner_file=/home/ftp/banner
+
+  - name: bannerfile
+    blockinfile:
+      path: /home/ftp/banner
+      create: yes
+      block: |
+        #############################
+        WARNING!! WARNING!! WARNING!!  
+        #############################
+
+  - name: chroot file create
+    lineinfile:
+      path: /home/ftp/chroot
+      line: hcyoon
+      create: yes
+      state: present
+
+  - name: create empty xferlog file
+    file:
+      path: /home/ftp/xferlog
+      state: touch
+      mode: '0644'
+
+  - name: remove Ansible managed block from banner
+    blockinfile:
+      path: /home/ftp/banner
+      state: absent
+      marker: "# {mark} ANSIBLE MANAGED BLOCK"
+
+  - name: create 10MB secretA.txt
+    command: dd if=/dev/urandom of=/home/ftp/files/secretA.txt bs=1M count=10
+
+  - name: create 10MB secretS.txt
+    command: dd if=/dev/urandom of=/home/ftp/files/secretS.txt bs=1M count=10
+
+  - name: restart vsftp
+    service:
+      name: vsftpd
+      state: restarted
