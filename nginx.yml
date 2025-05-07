@@ -1,0 +1,113 @@
+---
+- name: wordpress install & configuration
+  hosts: web2
+  gather_facts: true
+  ignore_errors: true
+  become: true
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+  - name: package install
+    yum:
+      name: "{{ item }}"
+      state: latest
+    loop:
+    - nginx
+    - tar
+    - wget
+    - php
+    - php-curl
+    - php-gd
+    - php-opcache
+    - php-mysqlnd
+    - php-cli
+
+  - name: wordpress file download
+    get_url:
+      url: https://ko.wordpress.org/wordpress-6.8-ko_KR.tar.gz
+      dest: './'
+
+  - name: unarchive wordpress
+    unarchive:
+      src: './wordpress-6.8-ko_KR.tar.gz'
+      dest: './'
+      remote_src: yes
+
+  - name: copy ./wordpress/ /usr/share/nginx/html/
+    copy:
+      src: ./wordpress/
+      dest: /usr/share/nginx/html/
+      remote_src: yes
+
+  - name: copy ./wordpress/ /usr/share/nginx/html/
+    copy:
+      src: /usr/share/nginx/html/wp-config-sample.php
+      dest: /usr/share/nginx/html/wp-config.php
+      remote_src: yes
+
+  - name: change nginx.conf
+    replace:
+      path: /etc/nginx/nginx.conf
+      regexp: 'user = apache'
+      replace: 'user = nginx'
+
+  - name: change wp-config.php
+    replace:
+      path: /usr/share/nginx/html/wp-config.php
+      regexp: "{{ item.src }}"
+      replace: "{{ item.dest }}"
+    with_items:
+    - { src: database_name_here, dest: wordpress }
+    - { src: username_here, dest: team4 }
+    - { src: password_here, dest: It12345! }
+    - { src: localhost, dest: team4.mysql.database.azure.com }
+
+  - name: change wp-config.php
+    replace:
+      path: /etc/php-fpm.d/www.conf
+      regexp: "{{ item.src }}"
+      replace: "{{ item.dest }}"
+    with_items:
+    - { src: user = apache, dest: user = nginx }
+    - { src: group = apache, dest: group = nginx }
+    - { src: listen.owner = apache, dest: listen.owner = nginx }
+    - { src: listen.group = apache, dest: listen.group = nginx }
+
+  - name: create wordpress nginx config
+    copy:
+      dest: /etc/nginx/conf.d/wordpress.conf
+      content: |
+        server {
+          listen 80;
+          server_name localhost;
+          root /usr/share/nginx/html;
+          index index.php index.html index.htm;
+
+          location / {
+              try_files $uri $uri/ =404;
+          }
+
+          location ~ \.php$ {
+              try_files $uri =404;
+              fastcgi_pass unix:/run/php-fpm/www.sock;
+              fastcgi_index index.php;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              include fastcgi_params;
+          }
+        }
+
+  - name: check nginx config syntax
+    command: nginx -t
+     
+  - name: start nginx
+    systemd:
+      name: nginx
+      state: started
+      enabled: yes
+
+  - name: start php-fpm
+    systemd:
+      name: php-fpm
+      state: started
+      enabled: yes

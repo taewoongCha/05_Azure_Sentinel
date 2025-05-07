@@ -1,0 +1,398 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "type": "string"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[resourceGroup().location]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "manual": {
+              "type": "Request",
+              "kind": "Http",
+              "inputs": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schemaId": {
+                      "type": "string"
+                    },
+                    "essentials": {
+                      "type": "object",
+                      "properties": {
+                        "alertRule": {
+                          "type": "string"
+                        },
+                        "firedDateTime": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "alertContext": {
+                      "type": "object",
+                      "properties": {
+                        "searchQuery": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "actions": {
+            "SwitchByAlertRule": {
+              "type": "Switch",
+              "expression": "@coalesce(triggerBody()?['data']?['essentials']?['alertRule'], 'Unknown')",
+              "cases": {
+                "secret-download-detection": {
+                  "case": "secret-download-detection",
+                  "actions": {
+                    "SendEmail_SecretDownload": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['smtp']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/SendEmailV3",
+                        "body": {
+                          "From": "logicsmtptest@gmail.com",
+                          "To": "logicsmtptest@gmail.com",
+                          "Subject": "⚠️ FTP 보안 파일 다운로드 감지 ⚠️",
+                          "Body": "<p><strong>경고:</strong> FTP 서버에서 secret 파일이 다운로드되었습니다.</p><p><strong>알림 규칙:</strong> @{triggerBody()?['data']?['essentials']?['alertRule']}</p><p><strong>시간:</strong> @{triggerBody()?['data']?['essentials']?['firedDateTime']}</p><p><strong>쿼리:</strong> @{triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['searchQuery']}</p>"
+                        }
+                      }
+                    },
+                    "RunNSGBlock_Secret_21": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "https://management.azure.com/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Network/networkSecurityGroups/team4-ftp-nsg/securityRules/FTP-Auth?api-version=2023-09-01",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "properties": {
+                            "priority": 110,
+                            "access": "Deny",
+                            "direction": "Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "21",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*"
+                          }
+                        },
+                        "authentication": {
+                          "type": "ManagedServiceIdentity"
+                        }
+                      },
+                      "runAfter": {
+                        "SendEmail_SecretDownload": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "RunNSGBlock_Secret_Trans": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "https://management.azure.com/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Network/networkSecurityGroups/team4-ftp-nsg/securityRules/FTP-Trans?api-version=2023-09-01",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "properties": {
+                            "priority": 120,
+                            "access": "Deny",
+                            "direction": "Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "65000-65100",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*"
+                          }
+                        },
+                        "authentication": {
+                          "type": "ManagedServiceIdentity"
+                        }
+                      },
+                      "runAfter": {
+                        "RunNSGBlock_Secret_21": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "CreateLogFile_secret_download_detection": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azureblob']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": "@{concat('desc: ', triggerBody()?['data']?['essentials']?['description'], ', \nvalue: ', string(triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['metricValue']), ', \ntime: ', triggerBody()?['data']?['essentials']?['firedDateTime'], ', \nquery: ', triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['searchQuery'])}",
+                        "headers": {
+                          "ReadFileMetadataFromServer": true
+                        },
+                        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/files",
+                        "queries": {
+                          "folderPath": "/logicapp-backup",
+                          "name": "FTP_Download_@{utcNow('yyyyMMdd_HHmmss')}.txt",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "RunNSGBlock_Secret_Trans": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "secret-upload-detection": {
+                  "case": "secret-upload-detection",
+                  "actions": {
+                    "SendEmail_Upload": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['smtp']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/SendEmailV3",
+                        "body": {
+                          "From": "logicsmtptest@gmail.com",
+                          "To": "logicsmtptest@gmail.com",
+                          "Subject": "⚠️ FTP 업로드 발생 감지 ⚠️",
+                          "Body": "<p><strong>주의:</strong> FTP 서버에서 업로드 이벤트가 감지되었습니다.</p><p><strong>알림 규칙:</strong> @{triggerBody()?['data']?['essentials']?['alertRule']}</p><p><strong>시간:</strong> @{triggerBody()?['data']?['essentials']?['firedDateTime']}</p><p><strong>쿼리:</strong> @{triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['searchQuery']}</p>"
+                        }
+                      }
+                    },
+                    "RunNSGBlock_FTP_21": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "https://management.azure.com/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Network/networkSecurityGroups/team4-ftp-nsg/securityRules/FTP-Auth?api-version=2023-09-01",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "properties": {
+                            "priority": 110,
+                            "access": "Deny",
+                            "direction": "Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "21",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*"
+                          }
+                        },
+                        "authentication": {
+                          "type": "ManagedServiceIdentity"
+                        }
+                      },
+                      "runAfter": {
+                        "SendEmail_Upload": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "RunNSGBlock_FTP_Trans": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "https://management.azure.com/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Network/networkSecurityGroups/team4-ftp-nsg/securityRules/FTP-Trans?api-version=2023-09-01",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "properties": {
+                            "priority": 120,
+                            "access": "Deny",
+                            "direction": "Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "65000-65100",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "*"
+                          }
+                        },
+                        "authentication": {
+                          "type": "ManagedServiceIdentity"
+                        }
+                      },
+                      "runAfter": {
+                        "RunNSGBlock_FTP_21": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "CreateLogFile_secret_upload_detection": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azureblob']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": "@{concat('desc: ', triggerBody()?['data']?['essentials']?['description'], ', \nvalue: ', string(triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['metricValue']), ', \ntime: ', triggerBody()?['data']?['essentials']?['firedDateTime'], ', \nquery: ', triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['searchQuery'])}",
+                        "headers": {
+                          "ReadFileMetadataFromServer": true
+                        },
+                        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/files",
+                        "queries": {
+                          "folderPath": "/logicapp-backup",
+                          "name": "FTP_Upload_@{utcNow('yyyyMMdd_HHmmss')}.txt",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "RunNSGBlock_FTP_Trans": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "Failed Login Attempts Detection": {
+                  "case": "Failed Login Attempts Detection",
+                  "actions": {
+                    "SendEmail_LoginFail": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['smtp']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "path": "/SendEmailV3",
+                        "body": {
+                          "From": "logicsmtptest@gmail.com",
+                          "To": "logicsmtptest@gmail.com",
+                          "Subject": "⚠️ Virtual machine 로그인 실패 감지 ⚠️",
+                          "Body": "<p><strong>경고:</strong> 가상 머신에서 로그인 실패가 감지되었습니다.</p><p><strong>알림 규칙:</strong> @{triggerBody()?['data']?['essentials']?['alertRule']}</p><p><strong>시간:</strong> @{triggerBody()?['data']?['essentials']?['firedDateTime']}</p><p><strong>쿼리:</strong> @{triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['searchQuery']}</p>"
+                        }
+                      }
+                    },
+                    "RunNSGBlock_SSH": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "PUT",
+                        "uri": "https://management.azure.com/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Network/networkSecurityGroups/team4-bat-nsg/securityRules/SSH?api-version=2023-09-01",
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "properties": {
+                            "priority": 100,
+                            "access": "Deny",
+                            "direction": "Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "22",
+                            "sourceAddressPrefix": "*",
+                            "destinationAddressPrefix": "10.0.0.4"
+                          }
+                        },
+                        "authentication": {
+                          "type": "ManagedServiceIdentity"
+                        }
+                      },
+                      "runAfter": {
+                        "SendEmail_LoginFail": [
+                          "Succeeded"
+                        ]
+                      }
+                    },
+                    "CreateLogFile_Failed Login Attempts Detection": {
+                      "type": "ApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connection": {
+                            "name": "@parameters('$connections')['azureblob']['connectionId']"
+                          }
+                        },
+                        "method": "post",
+                        "body": "@{concat('desc: ', triggerBody()?['data']?['essentials']?['description'], ', \nvalue: ', string(triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['metricValue']), ', \ntime: ', triggerBody()?['data']?['essentials']?['firedDateTime'], ', \nquery: ', triggerBody()?['data']?['alertContext']?['condition']?['allOf'][0]?['searchQuery'])}",
+                        "headers": {
+                          "ReadFileMetadataFromServer": true
+                        },
+                        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/files",
+                        "queries": {
+                          "folderPath": "/logicapp-backup",
+                          "name": "ssh_@{utcNow('yyyyMMdd_HHmmss')}.txt",
+                          "queryParametersSingleEncoded": true
+                        }
+                      },
+                      "runAfter": {
+                        "RunNSGBlock_SSH": [
+                          "Succeeded"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "Unknown": {
+                  "case": "Unknown",
+                  "actions": {
+                    "LogNullAlert": {
+                      "type": "Compose",
+                      "inputs": "⚠️ alertRule 값이 비어 있거나 null입니다."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "smtp": {
+                "connectionId": "/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Web/connections/team4-smtp-connection",
+                "connectionName": "smtp",
+                "id": "/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/providers/Microsoft.Web/locations/korea-central/managedApis/smtp"
+              },
+              "azureblob": {
+                "connectionId": "/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/resourceGroups/02-team4-rg/providers/Microsoft.Web/connections/team4-blob-connection",
+                "connectionName": "azureblob",
+                "id": "/subscriptions/99b79efe-ebd6-468c-b39f-5669acb259e1/providers/Microsoft.Web/locations/korea-central/managedApis/azureblob"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

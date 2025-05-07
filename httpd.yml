@@ -1,0 +1,74 @@
+---
+- name: wordpress install & configuration
+  hosts: web1
+  gather_facts: true
+  ignore_errors: true
+  become: true  
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    - name: package install
+      yum:
+        name: "{{ item }}"
+        state: latest
+      loop:
+        - httpd
+        - tar
+        - wget
+        - php
+        - php-curl
+        - php-gd
+        - php-opcache
+        - php-mysqlnd
+        - php-cli
+        - httpd
+
+    - name: wordpress file download
+      get_url:
+        url: https://ko.wordpress.org/wordpress-6.8-ko_KR.tar.gz
+        dest: './'
+
+    - name: unarchive wordpress
+      unarchive:
+        src: './wordpress-6.8-ko_KR.tar.gz'
+        dest: './'
+        remote_src: yes
+
+    - name: copy ./wordpress/ /var/www/html/
+      copy:
+        src: ./wordpress/
+        dest: /var/www/html/
+        remote_src: yes
+
+    - name: copy ./wordpress/ /var/www/html/
+      copy:
+        src: /var/www/html/wp-config-sample.php
+        dest: /var/www/html/wp-config.php
+        remote_src: yes
+
+    - name: change index.html index.php
+      replace:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: 'DirectoryIndex index.html'
+        replace: 'DirectoryIndex index.php'
+
+    - name: change wp-config.php
+      replace:
+        path: /var/www/html/wp-config.php
+        regexp: "{{ item.src }}"
+        replace: "{{ item.dest }}"
+      with_items:
+        - { src: database_name_here, dest: wordpress }
+        - { src: username_here, dest: team4 }
+        - { src: password_here, dest: It12345! }
+        - { src: localhost, dest: team4.mysql.database.azure.com }
+
+    - name: Set permissions for WordPress files
+      command: chown -R apache:apache /var/www/html/
+
+    - name: start httpd
+      systemd:
+        name: httpd
+        state: started
+        enabled: yes
